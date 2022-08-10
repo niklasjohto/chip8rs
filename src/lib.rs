@@ -1,3 +1,5 @@
+use rand::random;
+
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 
@@ -90,11 +92,199 @@ impl Emulator {
         let opcode = self.fetch();
     }
 
+    pub fn tick_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            if self.sound_timer == 1 {
+                // BEEP
+            }
+
+            self.sound_timer -= 1;
+        }
+    }
+
     fn fetch(&mut self) -> u16 {
         let higher_byte = self.ram[self.program_counter as usize] as u16;
         let lower_byte = self.ram[(self.program_counter + 1) as usize] as u16;
         let opcode = (higher_byte << 8) | lower_byte;
         self.program_counter += 2;
         opcode
+    }
+
+    fn execute(&mut self, opcode: u16) {
+        let digit1 = (opcode & 0xF000) >> 12;
+        let digit2 = (opcode & 0x0F00) >> 8;
+        let digit3 = (opcode & 0x00F0) >> 4;
+        let digit4 = opcode & 0x000F;
+
+        match (digit1, digit2, digit3, digit4) {
+            (0,0,0,0) => return,
+            (0,0,0xE,0) => {
+                self.display = [false; SCREEN_WIDTH * SCREEN_HEIGHT]
+            },
+            (1,_,_,_) => {
+                let nnn = opcode & 0xFFF;
+                self.program_counter = nnn;
+            },
+            (2,_,_,_) => {
+                let nnn = opcode & 0xFFF;
+                self.push(self.program_counter);
+                self.program_counter = nnn;
+            },
+            (3,_,_,_)  => {
+                let ptr = digit2 as usize;
+                let nn = (opcode & 0xFF) as u8;
+                if self.v_register[ptr] == nn {
+                    self.program_counter += 2;
+                }
+            },
+            (4,_,_,_) => {
+                let ptr = digit2 as usize;
+                let nn = (opcode & 0xFF) as u8;
+                if self.v_register[ptr] != nn {
+                    self.program_counter += 2;
+                }
+            },
+            (5,_,_,0) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+                if self.v_register[ptr1] == self.v_register[ptr2] {
+                    self.program_counter += 2;
+                }
+            },
+            (6,_,_,_) => {
+                let ptr = digit2 as usize;
+                let nn = (opcode & 0xFF) as u8;
+                self.v_register[ptr] = nn;
+            },
+            (7,_,_,_) => {
+                let ptr = digit2 as usize;
+                let nn = (opcode & 0xFF) as u8;
+                self.v_register[ptr] = self.v_register[ptr].wrapping_add(nn);
+            },
+            (8,_,_,0) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                self.v_register[ptr1] = self.v_register[ptr2];
+            },
+            (8,_,_,1) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                self.v_register[ptr1] |= self.v_register[ptr2];
+            },
+            (8,_,_,2) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                self.v_register[ptr1] &= self.v_register[ptr2];
+            },
+            (8,_,_,3) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                self.v_register[ptr1] ^= self.v_register[ptr2];
+            },
+            (8,_,_,4) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                let (new_vx, carry) = self.v_register[ptr1].overflowing_add(self.v_register[ptr2]);
+                let new_vf = if carry {1} else {0};
+
+                self.v_register[ptr1] = new_vx;
+                self.v_register[0xF] = new_vf;
+            },
+            (8,_,_,5) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                let (new_vx, borrow) = self.v_register[ptr1].overflowing_sub(self.v_register[ptr2]);
+                let new_vf = if borrow {0} else {1};
+
+                self.v_register[ptr1] = new_vx;
+                self.v_register[0xF] = new_vf;
+            },
+            (8,_,_,6) => {
+                let ptr = digit2 as usize;
+                let dropped_bit = self.v_register[ptr] & 1;
+                self.v_register[ptr] >>= 1;
+                self.v_register[0xF] = dropped_bit;
+            },
+            (8,_,_,7) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                let (new_vx, borrow) = self.v_register[ptr2].overflowing_sub(self.v_register[ptr1]);
+                let new_vf = if borrow {0} else {1};
+
+                self.v_register[ptr1] = new_vx;
+                self.v_register[0xF] = new_vf;
+            },
+            (8,_,_,8) => {
+                let ptr = digit2 as usize;
+                let dropped_bit = (self.v_register[ptr] >> 7) & 1;
+                self.v_register[ptr] <<= 1;
+                self.v_register[0xF] = dropped_bit;
+            },
+            (9,_,_,0) => {
+                let ptr1 = digit2 as usize;
+                let ptr2 = digit3 as usize;
+
+                if self.v_register[ptr1] != self.v_register[ptr2] {
+                    self.program_counter += 2;
+                }
+            },
+            (0xA,_,_,_) => {
+                let nnn = opcode & 0xFFF;
+                self.i_register = nnn;
+            },
+            (0xB,_,_,_) => {
+                let nnn = opcode & 0xFFF;
+                self.program_counter = (self.v_register[0] as u16) + nnn;
+            }
+            (0xC,_,_,_) => {
+                let ptr = digit2 as usize;
+                let nn = (opcode & 0xFF) as u8;
+                let rng: u8 = random();
+                self.v_register[ptr] = rng & nn;
+            },
+            (0xD,_,_,_) => {
+                let x_coord = self.v_register[digit2 as usize] as u16;
+                let y_coord = self.v_register[digit3 as usize] as u16;
+
+                let num_rows = digit4;
+
+                let mut flipped = false;
+
+                for y_line in 0..num_rows {
+                    let addr = self.i_register + y_line as u16;
+                    let pixels = self.ram[addr as usize];
+
+                    for x_line in 0..8 {
+                        if pixels & (0b10000000 >> x_line) != 0 {
+                            let x = (x_coord + x_line) as usize % SCREEN_WIDTH;
+                            let y = (y_coord + y_line) as usize % SCREEN_HEIGHT;
+
+                            let index = x + SCREEN_HEIGHT * y;
+
+                            flipped |= self.display[index];
+                            self.display[index] = true;
+                        } 
+                    }
+                }
+
+                if flipped {
+                   self.v_register[0xF] = 1;
+                } else {
+                    self.v_register[0xF] = 0;
+                }
+            }
+            (_,_,_,_) => unimplemented!("{}", opcode)
+        }
     }
 }
