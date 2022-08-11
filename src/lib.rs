@@ -1,4 +1,4 @@
-use rand::random;
+use rand::{self, Rng};
 
 pub const SCREEN_WIDTH: usize = 64;
 pub const SCREEN_HEIGHT: usize = 32;
@@ -90,6 +90,7 @@ impl Emulator {
 
     pub fn tick(&mut self) {
         let opcode = self.fetch();
+        self.execute(opcode);
     }
 
     pub fn tick_timers(&mut self) {
@@ -125,6 +126,10 @@ impl Emulator {
             (0,0,0xE,0) => {
                 self.display = [false; SCREEN_WIDTH * SCREEN_HEIGHT]
             },
+            (0,0,0xE,0xE) => {
+                let ret_addr = self.pop();
+                self.program_counter = ret_addr;
+            }
             (1,_,_,_) => {
                 let nnn = opcode & 0xFFF;
                 self.program_counter = nnn;
@@ -148,7 +153,7 @@ impl Emulator {
                     self.program_counter += 2;
                 }
             },
-            (5,_,_,0) => {
+            (5,_,_,_) => {
                 let ptr1 = digit2 as usize;
                 let ptr2 = digit3 as usize;
                 if self.v_register[ptr1] == self.v_register[ptr2] {
@@ -225,7 +230,7 @@ impl Emulator {
                 self.v_register[ptr1] = new_vx;
                 self.v_register[0xF] = new_vf;
             },
-            (8,_,_,8) => {
+            (8,_,_,0xE) => {
                 let ptr = digit2 as usize;
                 let dropped_bit = (self.v_register[ptr] >> 7) & 1;
                 self.v_register[ptr] <<= 1;
@@ -250,7 +255,7 @@ impl Emulator {
             (0xC,_,_,_) => {
                 let ptr = digit2 as usize;
                 let nn = (opcode & 0xFF) as u8;
-                let rng: u8 = random();
+                let rng: u8 = rand::thread_rng().gen();
                 self.v_register[ptr] = rng & nn;
             },
             (0xD,_,_,_) => {
@@ -266,14 +271,14 @@ impl Emulator {
                     let pixels = self.ram[addr as usize];
 
                     for x_line in 0..8 {
-                        if pixels & (0b10000000 >> x_line) != 0 {
+                         if (pixels & (0b1000_0000 >> x_line)) != 0 {
                             let x = (x_coord + x_line) as usize % SCREEN_WIDTH;
                             let y = (y_coord + y_line) as usize % SCREEN_HEIGHT;
 
                             let index = x + SCREEN_HEIGHT * y;
 
                             flipped |= self.display[index];
-                            self.display[index] = true;
+                            self.display[index] ^= true;
                         } 
                     }
                 }
@@ -283,8 +288,104 @@ impl Emulator {
                 } else {
                     self.v_register[0xF] = 0;
                 }
+            },
+            (0xE,_,9,0xE) => {
+                let ptr = digit2 as usize;
+                let vx = self.v_register[ptr];
+                let key = self.keys[vx as usize];
+                if key {
+                    self.program_counter += 2;
+                }
+            },
+            (0xE,_,0xA,1) => {
+                let ptr = digit2 as usize;
+                let vx = self.v_register[ptr];
+                let key = self.keys[vx as usize];
+                if !key {
+                    self.program_counter += 2;
+                }
+            },
+            (0xF,_,0,7) => {
+                let ptr = digit2 as usize;
+                self.v_register[ptr] = self.delay_timer;
+            },
+            (0xF,_,0,0xA) => {
+                let ptr = digit2 as usize;
+                let mut pressed = false;
+
+                for i in 0..self.keys.len() {
+                    if self.keys[i] {
+                        self.v_register[ptr] = i as u8;
+                        pressed = true;
+                        break;
+                    }
+                }
+
+                if !pressed {
+                    self.program_counter -= 2;
+                }
+            },
+            (0xF,_,1,5) => {
+                let ptr = digit2 as usize;
+                self.delay_timer = self.v_register[ptr];
+            },
+            (0xF,_,1,8) => {
+                let ptr = digit2 as usize;
+                self.sound_timer = self.v_register[ptr];
+            },
+            (0xF,_,1,0xE) => {
+                let ptr = digit2 as usize;
+                let vx = self.v_register[ptr] as u16;
+                self.i_register = self.i_register.wrapping_add(vx);
+            },
+            (0xF,_,2,9) => {
+                let ptr = digit2 as usize;
+                let char = self.v_register[ptr] as u16;
+                self.i_register = char * 5;
+            },
+            (0xF,_,3,3) => {
+                let ptr = digit2 as usize;
+                let vx = self.v_register[ptr] as f32;
+
+                let hundres = (vx / 100.0).floor() as u8;
+                let tens = ((vx / 10.0) % 10.0).floor() as u8;
+                let ones = (vx % 10.0) as u8;
+                
+                self.ram[self.i_register as usize] = hundres;
+                self.ram[(self.i_register + 1) as usize] = tens;
+                self.ram[(self.i_register + 2) as usize] = ones;
+            },
+            (0xF,_,5,5) => {
+                let ptr = digit2 as usize;
+                let i = self.i_register as usize;
+
+                for index in 0..=ptr {
+                    self.ram[i + ptr] = self.v_register[index];
+                }
+            },
+            (0xF,_,6,5) => {
+                let ptr = digit2 as usize;
+                let i = self.i_register as usize;
+
+                for index in 0..=ptr {
+                     self.v_register[index] = self.ram[i + ptr];
+                }
             }
-            (_,_,_,_) => unimplemented!("{}", opcode)
+            (_,_,_,_) => unimplemented!("{:#04x}", opcode)
         }
+    }
+
+    pub fn get_display(&self) -> &[bool] {
+        &self.display
+    }
+
+    pub fn keypress(&mut self, index: usize, pressed: bool) {
+        self.keys[index] = pressed;
+    }
+
+    pub fn load(&mut self, data: &[u8]) {
+        let start = START_ADDR as usize;
+        let end = start + data.len();
+        self.ram[start..end].copy_from_slice(data);
     }
 }
