@@ -87,7 +87,7 @@ fn draw_screen(emulator: &Emulator, canvas: &mut Canvas<Window>) {
     for (index, pixel) in display_buffer.iter().enumerate() {
         if *pixel {
             let x = (index % SCREEN_WIDTH) as u32;
-            let y = (index / SCREEN_HEIGHT) as u32;
+            let y = (index / SCREEN_WIDTH) as u32;
 
             let rectangle = Rect::new((x * SCALE) as i32, (y * SCALE) as i32, SCALE, SCALE);
             canvas.fill_rect(rectangle).unwrap();

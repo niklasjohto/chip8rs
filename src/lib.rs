@@ -275,7 +275,7 @@ impl Emulator {
                             let x = (x_coord + x_line) as usize % SCREEN_WIDTH;
                             let y = (y_coord + y_line) as usize % SCREEN_HEIGHT;
 
-                            let index = x + SCREEN_HEIGHT * y;
+                            let index = x + SCREEN_WIDTH * y;
 
                             flipped |= self.display[index];
                             self.display[index] ^= true;
@@ -360,7 +360,7 @@ impl Emulator {
                 let i = self.i_register as usize;
 
                 for index in 0..=ptr {
-                    self.ram[i + ptr] = self.v_register[index];
+                    self.ram[i + index] = self.v_register[index];
                 }
             },
             (0xF,_,6,5) => {
@@ -368,7 +368,7 @@ impl Emulator {
                 let i = self.i_register as usize;
 
                 for index in 0..=ptr {
-                     self.v_register[index] = self.ram[i + ptr];
+                     self.v_register[index] = self.ram[i + index];
                 }
             }
             (_,_,_,_) => unimplemented!("{:#04x}", opcode)
